@@ -21,12 +21,28 @@ const clients = new Map();
 /** @type {Map<string, Room>} code -> room */
 const rooms = new Map();
 
-const CHARS = {
-  quanlan: { hp: 100, speed: 220, color: "#f27347" },
-  liekong: { hp: 90, speed: 245, color: "#59bff2" },
-  tiebi: { hp: 120, speed: 200, color: "#8cb273", blockMul: 0.25 },
-  yingxi: { hp: 85, speed: 260, color: "#a666e6" },
+const CHAR_ALIASES = {
+  quanlan: "huangquan",
+  liekong: "xuanji",
+  tiebi: "yankai",
+  yingxi: "leisha",
 };
+
+const CHARS = {
+  huangquan: { hp: 100, speed: 225, color: "#f27a38" },
+  xuanji: { hp: 88, speed: 240, color: "#8cb8ff" },
+  shuizan: { hp: 95, speed: 235, color: "#59c7d9" },
+  leisha: { hp: 82, speed: 265, color: "#bfd959" },
+  yankai: { hp: 125, speed: 198, color: "#9eb87a", blockMul: 0.22 },
+  yanlu: { hp: 92, speed: 215, color: "#ff5933" },
+  huying: { hp: 90, speed: 250, color: "#e68c40" },
+  juwan: { hp: 105, speed: 230, color: "#f28ca6" },
+};
+
+function resolveChar(id) {
+  const mapped = CHAR_ALIASES[id] || id;
+  return CHARS[mapped] ? mapped : "huangquan";
+}
 
 function uid() {
   return crypto.randomBytes(6).toString("hex");
@@ -165,7 +181,7 @@ class Player {
   constructor(id, name, charId, x, y) {
     this.id = id;
     this.name = name;
-    this.charId = CHARS[charId] ? charId : "quanlan";
+    this.charId = resolveChar(charId);
     const def = CHARS[this.charId];
     this.hpMax = def.hp;
     this.hp = def.hp;
@@ -304,45 +320,76 @@ class Player {
   castSkill(idx) {
     this.skillCd[idx] = [5, 7, 8][idx];
     this.st = 4;
-    if (this.charId === "liekong") {
-      if (idx === 1) {
-        this.x += this.fx * 160;
-        this.y += this.fy * 160;
-        this.invuln = Math.max(this.invuln, 0.15);
-        this.clamp();
-      } else {
-        const count = idx === 2 ? 3 : 1;
-        const spread = idx === 2 ? 0.5 : 0;
-        for (let i = 0; i < count; i++) {
-          const t = count === 1 ? 0 : -spread / 2 + (spread * i) / (count - 1);
-          const cs = Math.cos(t);
-          const sn = Math.sin(t);
-          const fx = this.fx * cs - this.fy * sn;
-          const fy = this.fx * sn + this.fy * cs;
-          this.projectiles.push({
-            x: this.x + fx * 20,
-            y: this.y + fy * 20,
-            vx: fx * 500,
-            vy: fy * 500,
-            life: 0.8,
-            dmg: idx === 2 ? 10 : 16,
-            kb: 140,
-          });
-        }
+    const id = this.charId;
+    const fireFan = (count, spread, dmg, speed = 500, life = 0.8, kb = 120) => {
+      for (let i = 0; i < count; i++) {
+        const t = count === 1 ? 0 : -spread / 2 + (spread * i) / Math.max(1, count - 1);
+        const cs = Math.cos(t);
+        const sn = Math.sin(t);
+        const fx = this.fx * cs - this.fy * sn;
+        const fy = this.fx * sn + this.fy * cs;
+        this.projectiles.push({
+          x: this.x + fx * 20,
+          y: this.y + fy * 20,
+          vx: fx * speed,
+          vy: fy * speed,
+          life,
+          dmg,
+          kb,
+        });
       }
-    } else if (this.charId === "yingxi" && idx === 0) {
-      this.steal = 2.0;
+    };
+    const blink = (dist) => {
+      this.x += this.fx * dist;
+      this.y += this.fy * dist;
+      this.invuln = Math.max(this.invuln, 0.15);
+      this.clamp();
+    };
+    const dashHit = (dmg, range, kb) => {
+      this.dashLeft = 0.18;
+      this.dashCd = Math.max(this.dashCd, 0.4);
+      this.hitPulse = { dmg, range, arc: 100, kb };
+    };
+    const aoe = (dmg, range, kb) => {
+      this.hitPulse = { dmg, range, arc: 360, kb };
+    };
+    const cone = (dmg, range, kb) => {
+      this.hitPulse = { dmg, range, arc: 120, kb };
+    };
+
+    if (id === "xuanji") {
+      if (idx === 0) fireFan(1, 0, 16, 540, 0.9, 110);
+      else if (idx === 1) blink(175);
+      else fireFan(3, 0.52, 10, 500, 0.7, 90);
+    } else if (id === "yanlu") {
+      if (idx === 0) fireFan(1, 0, 18, 480, 0.95, 130);
+      else if (idx === 1) aoe(20, 95, 170);
+      else cone(24, 88, 190);
+    } else if (id === "huying") {
+      if (idx === 0) fireFan(4, 0.62, 9, 460, 0.65, 80);
+      else if (idx === 1) blink(150);
+      else this.steal = 1.8;
+    } else if (id === "leisha") {
+      if (idx === 0) this.steal = 2.1;
+      else if (idx === 1) dashHit(21, 155, 140);
+      else dashHit(18, 90, 80);
+    } else if (id === "shuizan") {
+      if (idx === 0) cone(18, 95, 180);
+      else if (idx === 1) dashHit(20, 160, 160);
+      else dashHit(16, 80, 60);
+    } else if (id === "yankai") {
+      if (idx === 0) cone(15, 72, 210);
+      else if (idx === 1) this.blockMul = 0.08;
+      else cone(28, 90, 240);
+    } else if (id === "juwan") {
+      if (idx === 0) dashHit(20, 200, 200);
+      else if (idx === 1) aoe(19, 100, 180);
+      else dashHit(18, 100, 70);
     } else {
-      this.hitPulse = {
-        dmg: 18 + idx * 4,
-        range: 70 + idx * 30,
-        arc: idx === 1 ? 360 : 100,
-        kb: 280,
-      };
-      if (idx === 0) {
-        this.dashLeft = 0.18;
-        this.dashCd = Math.max(this.dashCd, 0.4);
-      }
+      // huangquan default
+      if (idx === 0) dashHit(22, 180, 220);
+      else if (idx === 1) aoe(18, 90, 160);
+      else cone(26, 80, 240);
     }
   }
 
@@ -518,7 +565,7 @@ wss.on("connection", (ws) => {
         ws,
         id,
         name: String(data.name || "挑战者").slice(0, 16),
-        charId: "quanlan",
+        charId: "huangquan",
         roomCode: "",
       });
       send(ws, { t: "welcome", id });
@@ -531,7 +578,7 @@ wss.on("connection", (ws) => {
       leaveRoom(id);
       const code = makeCode();
       c.name = String(data.name || c.name).slice(0, 16);
-      c.charId = CHARS[data.char] ? data.char : "quanlan";
+      c.charId = resolveChar(data.char);
       const room = new Room(code, id);
       rooms.set(code, room);
       c.roomCode = code;
@@ -556,7 +603,7 @@ wss.on("connection", (ws) => {
       }
       leaveRoom(id);
       c.name = String(data.name || c.name).slice(0, 16);
-      c.charId = CHARS[data.char] ? data.char : "quanlan";
+      c.charId = resolveChar(data.char);
       c.roomCode = code;
       room.members.add(id);
       broadcastRoom(room, lobbyPayload(room));

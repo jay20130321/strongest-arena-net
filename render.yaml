@@ -1,0 +1,15 @@
+# 本文件用于「仅推送 server/ 目录」到 strongest-arena-net 仓库时的 Blueprint
+services:
+  - type: web
+    name: strongest-arena-net
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PLAY_URL
+        value: "https://jay20130321.github.io/strongest-arena/"

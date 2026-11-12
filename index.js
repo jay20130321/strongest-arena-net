@@ -130,12 +130,16 @@ class Room {
         const dy = victim.y - attacker.y;
         const dist = Math.hypot(dx, dy);
         if (dist > pulse.range) continue;
-        // facing cone
-        const ang = Math.atan2(dy, dx);
-        const face = Math.atan2(attacker.fy, attacker.fx);
-        let diff = Math.abs(ang - face);
-        while (diff > Math.PI) diff = Math.abs(diff - Math.PI * 2);
-        if (diff > ((pulse.arc || 90) * Math.PI) / 180 / 2) continue;
+        // 360 度技能不做朝向限制；近战扇形放宽一点
+        const arc = pulse.arc || 90;
+        if (arc < 359) {
+          const ang = Math.atan2(dy, dx);
+          const face = Math.atan2(attacker.fy, attacker.fx);
+          let diff = Math.abs(ang - face);
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          diff = Math.abs(diff);
+          if (diff > (arc * Math.PI) / 180 / 2) continue;
+        }
         const killed = victim.applyHit(pulse.dmg, pulse.kb, attacker);
         if (killed) {
           broadcastRoom(this, {
@@ -212,7 +216,28 @@ class Player {
   }
 
   applyInput(inp) {
-    this.input = inp || {};
+    const next = inp || {};
+    // 合并按下边沿，避免同 tick 多包时丢掉攻击
+    if (this.input) {
+      for (const k of ["atk", "dsh", "s1", "s2", "s3", "ult"]) {
+        next[k] = !!(next[k] || this.input[k]);
+      }
+    }
+    this.input = next;
+    // 用客户端上报坐标做轻度校正，避免权威模拟漂移导致打空
+    const cx = Number(next.x);
+    const cy = Number(next.y);
+    if (Number.isFinite(cx) && Number.isFinite(cy)) {
+      const dx = cx - this.x;
+      const dy = cy - this.y;
+      if (Math.hypot(dx, dy) < 120) {
+        this.x += dx * 0.35;
+        this.y += dy * 0.35;
+      } else if (Math.hypot(dx, dy) < 280) {
+        this.x += dx * 0.6;
+        this.y += dy * 0.6;
+      }
+    }
   }
 
   simulate(dt, room) {
@@ -238,11 +263,16 @@ class Player {
     for (let i = 0; i < 3; i++) this.skillCd[i] = Math.max(0, this.skillCd[i] - dt);
     if (this.comboWin <= 0) this.combo = 0;
 
-    const inp = this.input;
+    const inp = this.input || {};
     const mx = Number(inp.mx) || 0;
     const my = Number(inp.my) || 0;
     let ax = Number(inp.ax);
     let ay = Number(inp.ay);
+    // 移动时优先用移动朝向，和客户端一致，减少打空
+    if (Math.hypot(mx, my) > 0.08) {
+      ax = mx;
+      ay = my;
+    }
     if (!Number.isFinite(ax) || !Number.isFinite(ay) || (ax === 0 && ay === 0)) {
       ax = this.fx;
       ay = this.fy;
@@ -258,6 +288,7 @@ class Player {
       this.vx *= 0.85;
       this.vy *= 0.85;
       this.clamp();
+      this._clearEdges();
       return;
     }
 
@@ -266,6 +297,7 @@ class Player {
       this.x += mx * this.speed * 0.35 * dt;
       this.y += my * this.speed * 0.35 * dt;
       this.clamp();
+      this._clearEdges();
       return;
     }
 
@@ -277,7 +309,7 @@ class Player {
 
     if (inp.ult && this.aw >= 100) {
       this.aw = 0;
-      this.hitPulse = { dmg: 45, range: 140, arc: 360, kb: 600 };
+      this.hitPulse = { dmg: 45, range: 160, arc: 360, kb: 260 };
       this.st = 4;
     } else if (inp.s1 && this.skillCd[0] <= 0) {
       this.castSkill(0);
@@ -288,6 +320,7 @@ class Player {
     } else if (inp.atk && this.atkCd <= 0) {
       this.doM1();
     }
+    this._clearEdges();
 
     if (this.dashLeft > 0) {
       this.x += this.fx * 520 * dt;
@@ -305,16 +338,27 @@ class Player {
     this.clamp();
   }
 
+  _clearEdges() {
+    // 边沿指令只消费一次，防止按住连发
+    if (!this.input) return;
+    this.input.atk = false;
+    this.input.dsh = false;
+    this.input.s1 = false;
+    this.input.s2 = false;
+    this.input.s3 = false;
+    this.input.ult = false;
+  }
+
   doM1() {
     const dmgs = [8, 9, 11, 16];
-    const ranges = [56, 58, 62, 70];
+    const ranges = [72, 76, 82, 92]; // 略放大，联机延迟下更好打中
     const dmg = dmgs[this.combo % 4];
     const range = ranges[this.combo % 4];
     this.combo = (this.combo + 1) % 4;
     this.comboWin = 0.55;
     this.atkCd = this.combo === 0 ? 0.38 : 0.22;
     this.st = 1;
-    this.hitPulse = { dmg, range, arc: 80, kb: 120 + dmg * 10 };
+    this.hitPulse = { dmg, range, arc: 110, kb: 120 + dmg * 10 };
   }
 
   castSkill(idx) {
